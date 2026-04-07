@@ -1,0 +1,26 @@
+# Secrets / local config
+.env
+.env.*
+!.env.example
+
+# Python
+.venv/
+__pycache__/
+*.pyc
+.pytest_cache/
+
+# Local data / db / cache / logs
+data/
+*.db
+*.sqlite
+*.sqlite3
+*.log
+.tmp_uvicorn_err.log
+yf-cache/
+market-calendars/
+
+# IDE / OS
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db
