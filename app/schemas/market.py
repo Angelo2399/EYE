@@ -14,6 +14,8 @@ class MarketSymbol(str, Enum):
 
 class MarketTimeframe(str, Enum):
     m1 = "1m"
+    m5 = "5m"
+    m30 = "30m"
     h1 = "1h"
     h4 = "4h"
     d1 = "1d"

@@ -96,3 +96,41 @@ class IntelligenceIngestionResult(BaseModel):
     latest_direction: IntelligenceDirection = IntelligenceDirection.neutral
     average_confidence_pct: float = Field(default=0.0, ge=0.0, le=100.0)
     summary: str = ""
+
+
+class StructuredMarketEvent(BaseModel):
+    event_id: str
+    asset: str
+    symbol: str
+    timeframe: str | None = None
+    event_type: MarketEventType
+    source_type: IntelligenceSourceType
+    source_name: str
+    source_url: str | None = None
+    direction: IntelligenceDirection = IntelligenceDirection.neutral
+    urgency: IntelligenceImportance = IntelligenceImportance.medium
+    confidence_pct: float = Field(default=50.0, ge=0.0, le=100.0)
+    decay_minutes: int | None = Field(default=None, ge=0)
+    scenario_change: bool = False
+    title: str
+    summary: str
+    raw_text: str | None = None
+    occurred_at_utc: str | None = None
+    detected_at_utc: str | None = None
+    tags: list[str] = Field(default_factory=list)
+    market_context: dict[str, str | float | int | bool | None] = Field(
+        default_factory=dict
+    )
+    event_score: float = Field(default=50.0)
+
+
+class EventOutcomeFeedback(BaseModel):
+    event_id: str
+    asset: str
+    symbol: str
+    observed_after_5m: float | None = None
+    observed_after_30m: float | None = None
+    observed_after_2h: float | None = None
+    session_close_outcome: float | None = None
+    event_score: float = Field(default=50.0)
+    notes: str = ""

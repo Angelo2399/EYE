@@ -2,6 +2,7 @@ import pandas as pd
 import pytest
 from types import SimpleNamespace
 
+from app.schemas.market import MarketTimeframe
 from app.services.market_data_service import MarketDataService
 
 
@@ -158,3 +159,20 @@ def test_get_ohlcv_uses_massive_for_supported_indices(monkeypatch: pytest.Monkey
     assert result.iloc[0]["open"] == 24000.0
     assert result.iloc[1]["close"] == 24250.0
     assert str(result["timestamp"].dtype).startswith("datetime64[ns, UTC]")
+
+
+def test_intraday_mapping_supports_5m_and_30m() -> None:
+    service = MarketDataService(
+        settings=SimpleNamespace(
+            market_data_provider="yfinance",
+            market_data_realtime_enabled=False,
+            massive_api_key=None,
+        )
+    )
+
+    assert service._map_interval(MarketTimeframe.m5) == "5m"
+    assert service._map_interval(MarketTimeframe.m30) == "30m"
+    assert service._map_period(MarketTimeframe.m5) == "60d"
+    assert service._map_period(MarketTimeframe.m30) == "60d"
+    assert service._map_massive_range(MarketTimeframe.m5) == (5, "minute")
+    assert service._map_massive_range(MarketTimeframe.m30) == (30, "minute")

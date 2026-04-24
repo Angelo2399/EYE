@@ -360,6 +360,8 @@ class MarketDataService:
     def _map_interval(self, timeframe: MarketTimeframe) -> str:
         interval_map = {
             MarketTimeframe.m1: "1m",
+            MarketTimeframe.m5: "5m",
+            MarketTimeframe.m30: "30m",
             MarketTimeframe.h1: "60m",
             MarketTimeframe.h4: "60m",
             MarketTimeframe.d1: "1d",
@@ -375,6 +377,8 @@ class MarketDataService:
     def _map_period(self, timeframe: MarketTimeframe) -> str:
         period_map = {
             MarketTimeframe.m1: "5d",
+            MarketTimeframe.m5: "60d",
+            MarketTimeframe.m30: "60d",
             MarketTimeframe.h1: "60d",
             MarketTimeframe.h4: "60d",
             MarketTimeframe.d1: "2y",
@@ -389,6 +393,8 @@ class MarketDataService:
 
     def _map_massive_range(self, timeframe: MarketTimeframe) -> tuple[int, str]:
         range_map = {
+            MarketTimeframe.m5: (5, "minute"),
+            MarketTimeframe.m30: (30, "minute"),
             MarketTimeframe.h1: (1, "hour"),
             MarketTimeframe.h4: (1, "hour"),
             MarketTimeframe.d1: (1, "day"),
@@ -408,6 +414,8 @@ class MarketDataService:
         today: date = datetime.now(timezone.utc).date()
 
         lookback_days = {
+            MarketTimeframe.m5: 14,
+            MarketTimeframe.m30: 30,
             MarketTimeframe.h1: 14,
             MarketTimeframe.h4: 90,
             MarketTimeframe.d1: 730,
