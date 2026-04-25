@@ -1,8 +1,10 @@
 from __future__ import annotations
 
+from app.repositories.market_event_repository import MarketEventRepository
 from app.schemas.market import MarketSymbol
 from app.schemas.market_intelligence import MarketIntelligenceSnapshot
 from app.schemas.news_connector import ConnectorFetchRequest, ConnectorFetchResult
+from app.services.event_learning_service import EventLearningService
 from app.services.intelligence_ingestion_service import IntelligenceIngestionService
 from app.services.intelligence_request_builder_service import (
     IntelligenceRequestBuilderService,
@@ -16,6 +18,8 @@ class IntelligenceSnapshotService:
         ingestion_service: IntelligenceIngestionService | None = None,
         market_intelligence_service: MarketIntelligenceService | None = None,
         request_builder_service: IntelligenceRequestBuilderService | None = None,
+        market_event_repository: MarketEventRepository | None = None,
+        event_learning_service: EventLearningService | None = None,
     ) -> None:
         self.ingestion_service = (
             ingestion_service
@@ -31,6 +35,16 @@ class IntelligenceSnapshotService:
             request_builder_service
             if request_builder_service is not None
             else IntelligenceRequestBuilderService()
+        )
+        self.market_event_repository = (
+            market_event_repository
+            if market_event_repository is not None
+            else MarketEventRepository()
+        )
+        self.event_learning_service = (
+            event_learning_service
+            if event_learning_service is not None
+            else EventLearningService()
         )
 
     def build_snapshot_from_requests(
@@ -65,6 +79,20 @@ class IntelligenceSnapshotService:
             key_levels=key_levels,
             generated_at_utc=generated_at_utc,
         )
+
+        structured_events = self.market_intelligence_service.build_structured_events(
+            asset=asset,
+            symbol=symbol,
+            timeframe=timeframe,
+            items=items,
+            session_phase=session_phase,
+            regime=regime,
+            volatility_20=volatility_20,
+        )
+
+        for event in structured_events:
+            learned_event = self.event_learning_service.apply_adaptive_weight(event)
+            self.market_event_repository.save_event(learned_event)
 
         return snapshot, connector_results
 

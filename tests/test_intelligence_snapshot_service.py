@@ -8,6 +8,7 @@ from app.schemas.market_intelligence import (
     MarketEventType,
     MarketIntelligenceItem,
     MarketIntelligenceSnapshot,
+    StructuredMarketEvent,
 )
 from app.schemas.news_connector import (
     ConnectorFetchMode,
@@ -39,13 +40,24 @@ class FakeIngestionService:
 
 
 class FakeMarketIntelligenceService:
-    def __init__(self, *, returned_snapshot: MarketIntelligenceSnapshot) -> None:
+    def __init__(
+        self,
+        *,
+        returned_snapshot: MarketIntelligenceSnapshot,
+        returned_structured_events: list[StructuredMarketEvent] | None = None,
+    ) -> None:
         self.returned_snapshot = returned_snapshot
+        self.returned_structured_events = returned_structured_events or []
         self.last_kwargs: dict[str, object] | None = None
+        self.last_structured_kwargs: dict[str, object] | None = None
 
     def build_snapshot(self, **kwargs) -> MarketIntelligenceSnapshot:
         self.last_kwargs = kwargs
         return self.returned_snapshot
+
+    def build_structured_events(self, **kwargs) -> list[StructuredMarketEvent]:
+        self.last_structured_kwargs = kwargs
+        return self.returned_structured_events
 
 
 def _build_item(
@@ -338,3 +350,74 @@ def test_build_snapshot_from_requests_preserves_multi_source_order() -> None:
         ConnectorSourceKind.fed,
         ConnectorSourceKind.ecb,
     ]
+
+
+class FakeLearningService:
+    def apply_adaptive_weight(self, event):
+        updated_context = dict(event.market_context)
+        updated_context["learning_weight_multiplier"] = 1.12
+        updated_context["learning_bias"] = "positive"
+        updated_context["learning_samples"] = 5
+
+        return event.model_copy(
+            update={
+                "event_score": 90.0,
+                "market_context": updated_context,
+            }
+        )
+
+
+class FakeRepository:
+    def __init__(self) -> None:
+        self.saved_events = []
+
+    def save_event(self, event):
+        self.saved_events.append(event)
+        return 1
+
+
+def test_build_snapshot_from_requests_applies_learning_before_save() -> None:
+    repo = FakeRepository()
+
+    service = IntelligenceSnapshotService(
+        ingestion_service=FakeIngestionService(
+            returned_items=[
+                MarketIntelligenceItem(
+                    source=IntelligenceSourceType.news,
+                    event_type=MarketEventType.headline,
+                    importance=IntelligenceImportance.high,
+                    direction=IntelligenceDirection.bullish,
+                    title="Learning snapshot test",
+                    summary="Should save learned event.",
+                    source_name="FedWire",
+                    relevance_score=84.0,
+                    confidence_pct=79.0,
+                    impact_horizon_minutes=120,
+                    tags=["snapshot", "test", "ndx"],
+                )
+            ],
+            returned_results=[],
+        ),
+        market_event_repository=repo,
+        event_learning_service=FakeLearningService(),
+    )
+
+    snapshot, connector_results = service.build_snapshot_from_requests(
+        asset="Nasdaq 100",
+        symbol="NDX",
+        timeframe="1h",
+        requests=[],
+        session_phase="open",
+        regime="bullish",
+        volatility_20=0.011,
+    )
+
+    assert snapshot.asset == "Nasdaq 100"
+    assert connector_results == []
+    assert len(repo.saved_events) == 1
+
+    saved_event = repo.saved_events[0]
+    assert saved_event.event_score == 90.0
+    assert saved_event.market_context["learning_weight_multiplier"] == 1.12
+    assert saved_event.market_context["learning_bias"] == "positive"
+    assert saved_event.market_context["learning_samples"] == 5

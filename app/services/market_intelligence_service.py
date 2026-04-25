@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from collections import Counter
 from datetime import datetime, timezone
+from hashlib import sha1
 
 from app.schemas.market_intelligence import (
     IntelligenceDirection,
@@ -10,6 +11,7 @@ from app.schemas.market_intelligence import (
     MarketBias,
     MarketIntelligenceItem,
     MarketIntelligenceSnapshot,
+    StructuredMarketEvent,
 )
 
 
@@ -38,6 +40,7 @@ class MarketIntelligenceService:
             volatility_20=volatility_20,
         )
         dominant_drivers = self._derive_dominant_drivers(accepted_items)
+        top_headlines = self._derive_top_headlines(accepted_items)
         risk_flags = self._derive_risk_flags(
             items=accepted_items,
             session_phase=session_phase,
@@ -53,6 +56,7 @@ class MarketIntelligenceService:
             ingestion=ingestion,
             dominant_drivers=dominant_drivers,
             risk_flags=risk_flags,
+            top_headlines=top_headlines,
         )
 
         return MarketIntelligenceSnapshot(
@@ -74,6 +78,64 @@ class MarketIntelligenceService:
             items=accepted_items,
             synthesis=synthesis,
         )
+
+    def build_structured_events(
+        self,
+        *,
+        asset: str,
+        symbol: str,
+        timeframe: str,
+        items: list[MarketIntelligenceItem],
+        session_phase: str | None = None,
+        regime: str | None = None,
+        volatility_20: float | None = None,
+    ) -> list[StructuredMarketEvent]:
+        accepted_items = self._filter_items(items)
+        structured_events: list[StructuredMarketEvent] = []
+
+        for item in accepted_items:
+            title = str(item.title or item.summary or item.source_name or item.event_type.value).strip()
+            summary = str(item.summary or item.title or "").strip()
+            market_context = {
+                "session_phase": session_phase,
+                "regime": regime,
+                "volatility_20": volatility_20,
+                "relevance_score": round(float(item.relevance_score), 1),
+                "source": item.source.value,
+            }
+
+            structured_events.append(
+                StructuredMarketEvent(
+                    event_id=self._build_event_id(
+                        asset=asset,
+                        symbol=symbol,
+                        timeframe=timeframe,
+                        item=item,
+                    ),
+                    asset=asset,
+                    symbol=symbol,
+                    timeframe=timeframe,
+                    event_type=item.event_type,
+                    source_type=item.source,
+                    source_name=item.source_name or "unknown",
+                    source_url=item.source_url,
+                    direction=item.direction,
+                    urgency=item.importance,
+                    confidence_pct=item.confidence_pct,
+                    decay_minutes=item.impact_horizon_minutes,
+                    scenario_change=item.direction != IntelligenceDirection.neutral,
+                    title=title,
+                    summary=summary,
+                    raw_text=item.raw_text,
+                    occurred_at_utc=item.occurred_at_utc,
+                    detected_at_utc=item.detected_at_utc,
+                    tags=list(item.tags),
+                    market_context=market_context,
+                    event_score=self._estimate_event_score(item),
+                )
+            )
+
+        return structured_events
 
     def summarize_ingestion(
         self,
@@ -204,6 +266,48 @@ class MarketIntelligenceService:
 
         return importance_multiplier * relevance_component * confidence_component * 100.0
 
+    def _estimate_event_score(self, item: MarketIntelligenceItem) -> float:
+        importance_bonus = {
+            IntelligenceImportance.low: -5.0,
+            IntelligenceImportance.medium: 0.0,
+            IntelligenceImportance.high: 5.0,
+            IntelligenceImportance.critical: 10.0,
+        }[item.importance]
+        directional_bonus = (
+            3.0 if item.direction != IntelligenceDirection.neutral else 0.0
+        )
+        raw_score = (
+            (float(item.relevance_score) + float(item.confidence_pct)) / 2.0
+            + importance_bonus
+            + directional_bonus
+        )
+        return round(max(0.0, min(raw_score, 100.0)), 1)
+
+    def _build_event_id(
+        self,
+        *,
+        asset: str,
+        symbol: str,
+        timeframe: str,
+        item: MarketIntelligenceItem,
+    ) -> str:
+        payload = "|".join(
+            [
+                asset,
+                symbol,
+                timeframe,
+                item.event_type.value,
+                item.source.value,
+                item.source_name or "",
+                item.title or "",
+                item.summary or "",
+                item.occurred_at_utc or "",
+                item.detected_at_utc or "",
+            ]
+        )
+        digest = sha1(payload.encode("utf-8")).hexdigest()[:16]
+        return f"{str(symbol).strip().lower()}-{item.event_type.value}-{digest}"
+
     def _derive_dominant_drivers(
         self,
         items: list[MarketIntelligenceItem],
@@ -224,6 +328,24 @@ class MarketIntelligenceService:
 
         most_common = [name for name, _ in driver_counter.most_common(5)]
         return most_common
+
+    def _derive_top_headlines(
+        self,
+        items: list[MarketIntelligenceItem],
+    ) -> list[str]:
+        headlines: list[str] = []
+
+        for item in items:
+            title = str(item.title or "").strip()
+            if not title:
+                continue
+            if title in headlines:
+                continue
+            headlines.append(title)
+            if len(headlines) >= 2:
+                break
+
+        return headlines
 
     def _derive_risk_flags(
         self,
@@ -275,17 +397,20 @@ class MarketIntelligenceService:
         ingestion: IntelligenceIngestionResult,
         dominant_drivers: list[str],
         risk_flags: list[str],
+        top_headlines: list[str],
     ) -> str:
         drivers_text = ", ".join(dominant_drivers[:3]) if dominant_drivers else "none"
         risk_text = ", ".join(risk_flags[:3]) if risk_flags else "none"
         phase_text = session_phase or "n/a"
         regime_text = regime or "n/a"
+        headlines_text = " | ".join(top_headlines[:2]) if top_headlines else "none"
 
         return (
             f"{asset}: intelligence bias={market_bias.value}, "
             f"confidence={bias_confidence_pct:.1f}%, "
             f"session={phase_text}, regime={regime_text}. "
             f"Accepted items={ingestion.accepted_items}, critical items={ingestion.critical_items}. "
+            f"Top headlines={headlines_text}. "
             f"Dominant drivers={drivers_text}. "
             f"Risk flags={risk_text}."
         )
