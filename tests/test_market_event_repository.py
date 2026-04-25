@@ -1,4 +1,5 @@
 from contextlib import suppress
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 import sqlite3
 from uuid import uuid4
@@ -247,6 +248,98 @@ def test_save_feedback_and_list_recent_feedback() -> None:
         assert len(rows) == 1
         assert rows[0]["event_id"] == event.event_id
         assert rows[0]["notes"] == "Follow-through remained constructive."
+    finally:
+        _cleanup_db_file(db_path)
+
+
+def test_delete_old_events_and_feedback_respects_retention_windows() -> None:
+    db_path = _build_test_db_path()
+
+    try:
+        repository = MarketEventRepository(db_path=db_path)
+
+        old_event = _build_event(event_id="old-event-001")
+        recent_event = _build_event(event_id="recent-event-001")
+        repository.save_event(old_event)
+        repository.save_event(recent_event)
+
+        repository.save_feedback(
+            EventOutcomeFeedback(
+                event_id=old_event.event_id,
+                asset=old_event.asset,
+                symbol=old_event.symbol,
+                observed_after_5m=0.5,
+                observed_after_30m=1.0,
+                observed_after_2h=1.5,
+                session_close_outcome=2.0,
+                event_score=70.0,
+                notes="Old feedback.",
+            )
+        )
+        repository.save_feedback(
+            EventOutcomeFeedback(
+                event_id=recent_event.event_id,
+                asset=recent_event.asset,
+                symbol=recent_event.symbol,
+                observed_after_5m=0.6,
+                observed_after_30m=1.2,
+                observed_after_2h=1.8,
+                session_close_outcome=2.4,
+                event_score=72.0,
+                notes="Recent feedback.",
+            )
+        )
+
+        old_event_created_at = (
+            datetime.now(timezone.utc) - timedelta(days=120)
+        ).isoformat()
+        old_feedback_created_at = (
+            datetime.now(timezone.utc) - timedelta(days=200)
+        ).isoformat()
+
+        with sqlite3.connect(db_path) as connection:
+            connection.execute(
+                """
+                UPDATE market_events
+                SET created_at_utc = ?
+                WHERE event_id = ?
+                """,
+                (old_event_created_at, old_event.event_id),
+            )
+            connection.execute(
+                """
+                UPDATE event_outcome_feedback
+                SET created_at_utc = ?
+                WHERE event_id = ?
+                """,
+                (old_feedback_created_at, old_event.event_id),
+            )
+            connection.commit()
+
+        deleted_events = repository.delete_events_older_than(days=90)
+        deleted_feedback = repository.delete_feedback_older_than(days=180)
+        remaining_events = repository.list_recent_events(limit=10)
+        remaining_feedback = repository.list_recent_feedback(limit=10)
+
+        assert deleted_events == 1
+        assert deleted_feedback == 1
+        assert [row["event_id"] for row in remaining_events] == ["recent-event-001"]
+        assert [row["event_id"] for row in remaining_feedback] == ["recent-event-001"]
+    finally:
+        _cleanup_db_file(db_path)
+
+
+def test_delete_old_rows_rejects_invalid_days() -> None:
+    db_path = _build_test_db_path()
+
+    try:
+        repository = MarketEventRepository(db_path=db_path)
+
+        with pytest.raises(ValueError, match="days must be greater than 0"):
+            repository.delete_events_older_than(days=0)
+
+        with pytest.raises(ValueError, match="days must be greater than 0"):
+            repository.delete_feedback_older_than(days=0)
     finally:
         _cleanup_db_file(db_path)
 

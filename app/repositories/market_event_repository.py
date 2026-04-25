@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import json
 import sqlite3
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 from app.core.config import get_settings
@@ -250,6 +250,40 @@ class MarketEventRepository:
             row["tags"] = json.loads(row.pop("tags_json") or "[]")
             row["market_context"] = json.loads(row.pop("market_context_json") or "{}")
         return results
+
+    def delete_events_older_than(self, days: int = 90) -> int:
+        if days <= 0:
+            raise ValueError("days must be greater than 0")
+
+        cutoff_utc = (datetime.now(timezone.utc) - timedelta(days=days)).isoformat()
+
+        with sqlite3.connect(self.db_path) as connection:
+            cursor = connection.execute(
+                """
+                DELETE FROM market_events
+                WHERE datetime(created_at_utc) < datetime(?)
+                """,
+                (cutoff_utc,),
+            )
+            connection.commit()
+            return int(cursor.rowcount if cursor.rowcount != -1 else 0)
+
+    def delete_feedback_older_than(self, days: int = 180) -> int:
+        if days <= 0:
+            raise ValueError("days must be greater than 0")
+
+        cutoff_utc = (datetime.now(timezone.utc) - timedelta(days=days)).isoformat()
+
+        with sqlite3.connect(self.db_path) as connection:
+            cursor = connection.execute(
+                """
+                DELETE FROM event_outcome_feedback
+                WHERE datetime(created_at_utc) < datetime(?)
+                """,
+                (cutoff_utc,),
+            )
+            connection.commit()
+            return int(cursor.rowcount if cursor.rowcount != -1 else 0)
 
     def _initialize_database(self) -> None:
         with sqlite3.connect(self.db_path) as connection:
