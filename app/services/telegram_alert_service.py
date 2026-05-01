@@ -147,6 +147,7 @@ class TelegramAlertService:
         scenario: str | None = None,
         confidence_label: str | None = None,
         market_explanation: str | None = None,
+        top_headlines: list[str] | None = None,
         entry_min: float | None = None,
         entry_max: float | None = None,
         stop_loss: float | None = None,
@@ -154,46 +155,79 @@ class TelegramAlertService:
         take_profit_2: float | None = None,
         risk_reward: float | None = None,
         reason: str | None = None,
+        technical_reason: str | None = None,
         previous_state: dict[str, object] | None = None,
         state_change: dict[str, object] | None = None,
     ) -> str:
         signal_text = self._format_signal_label(action)
         asset_text = self._format_asset_label(asset)
-        confidence_text = self._format_confidence_label(confidence_label)
-        scenario_text = self._format_scenario_label(scenario)
-        reason_text = self._format_reason_text(reason or market_explanation)
+        signal_emoji = self._format_signal_emoji(signal_text)
+
+        resolved_reason = (reason or market_explanation or "")
+        reason_text = self._build_human_reason(
+            action=signal_text,
+            scenario=scenario,
+            confidence_label=confidence_label,
+            reason=resolved_reason,
+        )
+        formatted_technical_reason = self._format_technical_reason(technical_reason)
+        headline_line = self._build_headline_line(
+            top_headlines=top_headlines,
+            reason=resolved_reason,
+            action=signal_text,
+            technical_reason=formatted_technical_reason,
+        )
+        main_driver_line = self._build_main_driver_line(
+            reason=resolved_reason,
+            technical_reason=formatted_technical_reason,
+            top_headlines=top_headlines,
+        )
+        what_changed_line = self._build_what_changed_line(state_change)
 
         if signal_text in {"WAIT", "NO TRADE"}:
-            return "\n".join(
-                [
-                    f"\U0001F4CA {asset_text}",
-                    f"\u2022 Signal: {signal_text}",
-                    f"\u2022 Scenario: {scenario_text}",
-                    f"\u2022 Confidence: {confidence_text}",
-                    f"\u2022 Reason: {reason_text}",
-                    "\u2022 Entry: n/a",
-                    "\u2022 Stop loss: n/a",
-                    "\u2022 Take profit: n/a",
-                ]
-            )
-
-        take_profit_text = self._format_take_profit_summary(
-            take_profit_1=take_profit_1,
-            take_profit_2=take_profit_2,
-        )
-
-        return "\n".join(
-            [
-                f"\U0001F4CA {asset_text}",
-                f"\u2022 Signal: {signal_text}",
-                f"\u2022 Scenario: {scenario_text}",
-                f"\u2022 Confidence: {confidence_text}",
-                f"\u2022 Reason: {reason_text}",
-                f"\u2022 Entry: {self._format_entry_range(entry_min, entry_max)}",
-                f"\u2022 Stop loss: {self._format_price(stop_loss)}",
-                f"\u2022 Take profit: {take_profit_text}",
+            lines = [
+                f"📊 {asset_text}",
+                f"{signal_emoji} Signal: {signal_text}",
+                "📍 Entry area: n/a",
+                "🛑 Stop loss: n/a",
+                "🎯 Take profit: n/a",
             ]
-        )
+
+            if main_driver_line:
+                lines.append(main_driver_line)
+
+            if headline_line:
+                lines.append(headline_line)
+
+            if what_changed_line:
+                lines.append(what_changed_line)
+
+            lines.append(f"🧠 Why EYE thinks this: {reason_text}")
+            return "\n".join(lines)
+
+        lines = [
+            f"📊 {asset_text}",
+            f"{signal_emoji} Signal: {signal_text}",
+            f"📍 Entry area: {self._format_entry_range(entry_min, entry_max)}",
+            f"🛑 Stop loss: {self._format_price(stop_loss)}",
+            (
+                "🎯 Take profit: "
+                f"{self._format_take_profit_summary(take_profit_1=take_profit_1, take_profit_2=take_profit_2)}"
+            ),
+        ]
+
+        if main_driver_line:
+            lines.append(main_driver_line)
+
+        if headline_line:
+            lines.append(headline_line)
+
+        if what_changed_line:
+            lines.append(what_changed_line)
+
+        lines.append(f"🧠 Why EYE thinks this: {reason_text}")
+
+        return "\n".join(lines)
 
     def _format_level(self, value: float | None) -> str:
         if value is None:
@@ -225,6 +259,15 @@ class TelegramAlertService:
         }
 
         return mapping.get(normalized, "WAIT")
+
+    def _format_signal_emoji(self, signal_text: str) -> str:
+        mapping = {
+            "BUY": "\U0001F7E2",
+            "SELL": "\U0001F534",
+            "WAIT": "\U0001F7E1",
+            "NO TRADE": "\u26AA",
+        }
+        return mapping.get(signal_text, "\U0001F7E1")
 
     def _format_scenario_label(self, scenario: str | None) -> str:
         text = str(scenario or "n/a").strip().replace("_", " ")
@@ -260,6 +303,368 @@ class TelegramAlertService:
         text = " ".join(text.split())
 
         return text
+
+    def _format_technical_reason(self, technical_reason: str | None) -> str | None:
+        text = " ".join(str(technical_reason or "").split())
+        if not text:
+            return None
+
+        replacements = {
+            "Price is above key moving averages.": (
+                "Price is trading above key moving averages."
+            ),
+            "Price is below key moving averages.": (
+                "Price is trading below key moving averages."
+            ),
+            "Momentum is supportive.": "Momentum remains supportive.",
+            "Momentum is weak.": "Momentum remains weak.",
+            "Volatility is elevated.": "Volatility remains elevated.",
+            "Volatility is compressed.": "Volatility remains compressed.",
+            "Volatility is stable.": "Volatility remains stable.",
+            "Structure shows directional expansion.": (
+                "Structure shows directional expansion."
+            ),
+            "Structure looks range-bound.": "Structure remains range-bound.",
+            "Structure is only partially aligned.": (
+                "Structure is only partially aligned."
+            ),
+            "Current regime is sideways.": "Market regime remains sideways.",
+            "Current regime is high volatility.": (
+                "Market regime remains high-volatility."
+            ),
+            "Current regime is directionally supportive.": (
+                "Market regime remains directionally supportive."
+            ),
+            "Trend structure is mixed.": "Trend structure remains mixed.",
+            "Momentum is not decisive.": "Momentum is not yet decisive.",
+        }
+
+        return replacements.get(text, text)
+
+    def _build_human_reason(
+        self,
+        *,
+        action: str,
+        scenario: str | None,
+        confidence_label: str | None,
+        reason: str | None,
+    ) -> str:
+        scenario_text = self._format_scenario_label(scenario).lower()
+        confidence_text = self._format_confidence_label(confidence_label).lower()
+        raw_reason = " ".join(str(reason or "").split())
+        raw_reason_lower = raw_reason.lower()
+
+        drivers_text = self._extract_drivers_from_reason(raw_reason)
+        synthesis_text = self._extract_synthesis_from_reason(raw_reason)
+        use_synthesis_text = self._should_prefer_synthesis_text(synthesis_text)
+
+        if action in {"WAIT", "NO TRADE"}:
+            if use_synthesis_text:
+                return synthesis_text
+
+            if drivers_text:
+                return (
+                    f"Drivers are still mixed ({drivers_text}), "
+                    "so EYE does not see a clean trade yet."
+                )
+
+            if "range day" in scenario_text:
+                return "The market is moving sideways, so EYE prefers to wait."
+
+            if "trend up" in scenario_text and confidence_text == "low":
+                return "Trend is still up, but confirmation is not strong enough yet."
+
+            if "trend down" in scenario_text and confidence_text == "low":
+                return "Trend is still down, but confirmation is not strong enough yet."
+
+            if confidence_text == "low":
+                return "Confirmation is still weak, so EYE prefers to stay patient."
+
+            if "external intelligence bias=neutral" in raw_reason_lower:
+                return "News and macro flow do not confirm a strong edge right now."
+
+            return "There is no clear intraday edge right now."
+
+        if action == "BUY":
+            if use_synthesis_text:
+                return synthesis_text
+
+            if drivers_text:
+                return f"EYE sees a long setup supported by {drivers_text}."
+
+            if "trend up" in scenario_text:
+                return "Trend and confirmation support a long setup."
+
+            return "EYE sees a long intraday setup with enough confirmation."
+
+        if action == "SELL":
+            if use_synthesis_text:
+                return synthesis_text
+
+            if drivers_text:
+                return f"EYE sees a short setup supported by {drivers_text}."
+
+            if "trend down" in scenario_text:
+                return "Trend and confirmation support a short setup."
+
+            return "EYE sees a short intraday setup with enough confirmation."
+
+        return "Current market context does not provide a strong edge."
+
+    def _extract_drivers_from_reason(self, reason: str) -> str | None:
+        text = str(reason or "")
+        marker = "drivers="
+        lower_text = text.lower()
+        idx = lower_text.find(marker)
+
+        if idx == -1:
+            return None
+
+        drivers_part = text[idx + len(marker):]
+        for stop_marker in [", synthesis=", ". synthesis=", "; synthesis="]:
+            stop_idx = drivers_part.lower().find(stop_marker.strip().lower())
+            if stop_idx != -1:
+                drivers_part = drivers_part[:stop_idx]
+                break
+
+        drivers_part = drivers_part.strip(" .,:;")
+        if not drivers_part or drivers_part.lower() == "n/a":
+            return None
+
+        return drivers_part.replace("_", " ")
+
+    def _extract_synthesis_from_reason(self, reason: str) -> str | None:
+        text = str(reason or "")
+        marker = "synthesis="
+        lower_text = text.lower()
+        idx = lower_text.find(marker)
+
+        if idx == -1:
+            return None
+
+        synthesis_part = text[idx + len(marker):].strip()
+        if not synthesis_part:
+            return None
+
+        end_markers = [
+            " Entry window ",
+            " Score=",
+            " fav move=",
+            " tp1=",
+            " stop first=",
+            " confidence=",
+            " Technical confluence score=",
+            " External intelligence bias=",
+        ]
+
+        end_index = len(synthesis_part)
+        for marker_text in end_markers:
+            marker_idx = synthesis_part.find(marker_text)
+            if marker_idx != -1:
+                end_index = min(end_index, marker_idx)
+
+        synthesis_part = synthesis_part[:end_index].strip(" .,:;")
+        synthesis_part = " ".join(synthesis_part.split())
+
+        return synthesis_part or None
+
+    def _build_main_driver_line(
+        self,
+        *,
+        reason: str | None,
+        technical_reason: str | None,
+        top_headlines: list[str] | None = None,
+    ) -> str | None:
+        if technical_reason:
+            return f"🧩 Main driver: {technical_reason}"
+
+        drivers_text = self._extract_drivers_from_reason(str(reason or ""))
+        if drivers_text:
+            return f"🧩 Main driver: {drivers_text}"
+
+        if top_headlines:
+            first_headline = next(
+                (str(item).strip() for item in top_headlines if str(item).strip()),
+                "",
+            )
+            if first_headline:
+                return f"🧩 Main driver: {first_headline}"
+
+        return None
+
+    def _build_what_changed_line(
+        self,
+        state_change: dict[str, object] | None,
+    ) -> str | None:
+        if not isinstance(state_change, dict) or not state_change:
+            return None
+
+        previous_action = str(
+            state_change.get("previous_action")
+            or state_change.get("from_action")
+            or ""
+        ).strip()
+        current_action = str(
+            state_change.get("action")
+            or state_change.get("current_action")
+            or state_change.get("to_action")
+            or ""
+        ).strip()
+
+        if previous_action and current_action:
+            previous_label = self._format_signal_label(previous_action)
+            current_label = self._format_signal_label(current_action)
+            if previous_label != current_label:
+                return f"🔄 What changed: signal moved from {previous_label} to {current_label}."
+
+        changed_parts: list[str] = []
+
+        if bool(state_change.get("scenario_changed")):
+            changed_parts.append("market context changed")
+        if bool(state_change.get("confidence_changed")):
+            changed_parts.append("confidence changed")
+        if bool(state_change.get("entry_changed")):
+            changed_parts.append("entry area changed")
+        if bool(state_change.get("risk_changed")):
+            changed_parts.append("risk levels changed")
+
+        if changed_parts:
+            return f"🔄 What changed: {', '.join(changed_parts)}."
+
+        return None
+
+    def _should_prefer_synthesis_text(self, synthesis_text: str | None) -> bool:
+        text = " ".join(str(synthesis_text or "").split())
+        if not text:
+            return False
+
+        lowered = text.lower().strip(" .")
+        if lowered in {
+            "risk improving",
+            "risk worsening",
+            "mixed",
+            "neutral",
+            "supportive",
+            "constructive",
+            "weak",
+            "strong",
+        }:
+            return False
+
+        return len(text.split()) >= 6
+
+    def _build_headline_line(
+        self,
+        *,
+        top_headlines: list[str] | None,
+        reason: str | None,
+        action: str | None = None,
+        technical_reason: str | None = None,
+    ) -> str | None:
+        if self._extract_synthesis_from_reason(reason or ""):
+            return None
+
+        signal_text = self._format_signal_label(action)
+        formatted_technical_reason = self._format_technical_reason(
+            technical_reason
+        )
+
+        if signal_text in {"BUY", "SELL"} and formatted_technical_reason:
+            return None
+
+        headlines = [
+            " ".join(str(item).split())
+            for item in list(top_headlines or [])
+            if " ".join(str(item).split())
+        ]
+        if not headlines:
+            return None
+
+        return f"\U0001F4F0 Headline: {headlines[0]}"
+
+    def _build_technical_confluence_line(
+        self,
+        *,
+        reason: str | None,
+        technical_reason: str | None = None,
+    ) -> str | None:
+        technical = self._extract_technical_confluence_from_reason(reason)
+        if technical is None:
+            return None
+
+        score = technical.get("score") or "n/a"
+        trend = str(technical.get("trend") or "neutral").strip().lower()
+        summary = str(technical.get("summary") or "").strip()
+        formatted_technical_reason = self._format_technical_reason(
+            technical_reason
+        )
+
+        if summary:
+            summary_lower = summary.lower()
+            if summary_lower.startswith("technical confluence is "):
+                summary_lower = summary_lower.replace(
+                    "technical confluence is ",
+                    "",
+                    1,
+                ).strip()
+            if (
+                formatted_technical_reason
+                and summary_lower in {"strong", "constructive", "mixed", "weak"}
+            ):
+                return None
+            return (
+                f"\U0001F4D0 Technicals: "
+                f"{summary_lower} {trend} alignment ({score}/100)."
+            )
+
+        return f"\U0001F4D0 Technicals: {trend} confluence ({score}/100)."
+
+    def _extract_technical_confluence_from_reason(
+        self,
+        reason: str | None,
+    ) -> dict[str, str] | None:
+        text = " ".join(str(reason or "").split())
+        if "Technical confluence score=" not in text:
+            return None
+
+        start = text.find("Technical confluence score=")
+        snippet = text[start:]
+
+        end_markers = [
+            " External intelligence bias=",
+            " Entry window ",
+            " Score=",
+            " fav move=",
+            " tp1=",
+            " confidence=",
+        ]
+
+        end_index = len(snippet)
+        for marker in end_markers:
+            idx = snippet.find(marker)
+            if idx != -1:
+                end_index = min(end_index, idx)
+
+        snippet = snippet[:end_index].strip().rstrip(".")
+
+        fields: dict[str, str] = {}
+
+        prefixes = {
+            "score": "Technical confluence score=",
+            "trend": "trend=",
+            "momentum": "momentum=",
+            "volatility": "volatility=",
+            "structure": "structure=",
+            "summary": "summary=",
+        }
+
+        for part in snippet.split(", "):
+            for field_name, prefix in prefixes.items():
+                if part.startswith(prefix):
+                    fields[field_name] = part[len(prefix):].strip()
+                    break
+
+        return fields or None
 
     def _format_entry_range(
         self,
@@ -321,6 +726,9 @@ class TelegramAlertService:
         scenario: str | None = None,
         confidence_label: str | None = None,
         market_explanation: str | None = None,
+        top_headlines: list[str] | None = None,
+        reason: str | None = None,
+        technical_reason: str | None = None,
         entry_min: float | None = None,
         entry_max: float | None = None,
         stop_loss: float | None = None,
@@ -330,9 +738,13 @@ class TelegramAlertService:
         timezone_name: str | None = None,
         chat_id: str | None = None,
     ) -> dict[str, object]:
-        if timezone_name and self._is_quiet_hours(timezone_name):
+        resolved_timezone_name = self._resolve_timezone_name(
+            timezone_name or self.quiet_hours_timezone
+        )
+
+        if self._is_quiet_hours(resolved_timezone_name):
             return self._build_quiet_hours_result(
-                timezone_name=timezone_name,
+                timezone_name=resolved_timezone_name,
                 asset=asset,
                 event_type="asset_update",
             )
@@ -351,7 +763,7 @@ class TelegramAlertService:
             take_profit_2=take_profit_2,
             risk_reward=risk_reward,
         )
-        reason = str(market_explanation or "").strip()
+        resolved_reason = str(reason or market_explanation or "").strip()
 
         message = self.build_asset_update_message(
             asset=asset,
@@ -360,18 +772,19 @@ class TelegramAlertService:
             scenario=scenario,
             confidence_label=confidence_label,
             market_explanation=market_explanation,
+            top_headlines=top_headlines,
             entry_min=entry_min,
             entry_max=entry_max,
             stop_loss=stop_loss,
             take_profit_1=take_profit_1,
             take_profit_2=take_profit_2,
             risk_reward=risk_reward,
-            reason=reason,
+            reason=resolved_reason,
+            technical_reason=technical_reason,
             previous_state=previous_state,
             state_change=state_change,
         )
 
-        resolved_timezone_name = self._resolve_timezone_name(timezone_name)
         state_change_kind = (
             "alert" if bool(state_change.get("should_alert")) else "hourly_update"
         )
@@ -607,14 +1020,20 @@ class TelegramAlertService:
         local_time: str | None = None,
         chat_id: str | None = None,
     ) -> dict:
-        if timezone_name and self._is_quiet_hours(timezone_name):
+        resolved_timezone_name = self._resolve_timezone_name(
+            timezone_name or self.quiet_hours_timezone
+        )
+
+        if self._is_quiet_hours(resolved_timezone_name):
             return self._build_quiet_hours_result(
-                timezone_name=timezone_name,
+                timezone_name=resolved_timezone_name,
                 event_type="briefing",
             )
 
-        timezone_text = f" | TZ {timezone_name}" if timezone_name else ""
-        local_time_text = f" | Ora locale {local_time}" if local_time else ""
+        timezone_text = (
+            f" | TZ {resolved_timezone_name}" if resolved_timezone_name else ""
+        )
+        local_time_text = f" | Local time {local_time}" if local_time else ""
 
         message = (
             f"EYE BRIEFING\n"

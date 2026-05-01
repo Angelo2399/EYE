@@ -488,13 +488,16 @@ def test_build_asset_update_message_returns_alert_when_action_changes() -> None:
     )
 
     assert message.startswith("\U0001F4CA Nasdaq 100 (NDX)")
-    assert "\u2022 Signal: BUY" in message
-    assert "\u2022 Scenario: breakout confirmed" in message
-    assert "\u2022 Confidence: high" in message
-    assert "\u2022 Reason: External intelligence supports a bullish breakout." in message
-    assert "\u2022 Entry: 100.00 - 101.00" in message
-    assert "\u2022 Stop loss: 99.00" in message
-    assert "\u2022 Take profit: 102.00 / 103.00" in message
+    assert "\U0001F7E2 Signal: BUY" in message
+    assert "\U0001F4CD Entry area: 100.00 - 101.00" in message
+    assert "\U0001F6D1 Stop loss: 99.00" in message
+    assert "\U0001F3AF Take profit: 102.00 / 103.00" in message
+    assert (
+        "\U0001F9E0 Why EYE thinks this: EYE sees a long intraday setup with enough confirmation."
+        in message
+    )
+    assert "Scenario:" not in message
+    assert "Confidence:" not in message
     assert "Why now:" not in message
     assert "Expected reward" not in message
     assert "Prima:" not in message
@@ -533,14 +536,14 @@ def test_build_asset_update_message_returns_update_when_only_levels_change() -> 
     )
 
     assert message.startswith("\U0001F4CA WTI Crude Oil (WTI)")
-    assert "\u2022 Signal: SELL" in message
+    assert "\U0001F534 Signal: SELL" in message
+    assert "\U0001F4CD Entry area: 70.00 - 70.50" in message
+    assert "\U0001F6D1 Stop loss: 71.10" in message
+    assert "\U0001F3AF Take profit: 69.20 / 68.60" in message
     assert (
-        "\u2022 Reason: No strong confirmation from current market context."
+        "\U0001F9E0 Why EYE thinks this: EYE sees a short intraday setup with enough confirmation."
         in message
     )
-    assert "\u2022 Entry: 70.00 - 70.50" in message
-    assert "\u2022 Stop loss: 71.10" in message
-    assert "\u2022 Take profit: 69.20 / 68.60" in message
     assert "Livelli aggiornati" not in message
     assert "Motivo:" not in message
 
@@ -578,11 +581,9 @@ def test_build_asset_update_message_returns_follow_up_when_no_strong_change() ->
     )
 
     assert message.startswith("\U0001F4CA S&P 500 (SPX)")
-    assert "\u2022 Signal: BUY" in message
-    assert "\u2022 Scenario: broad market breakout" in message
-    assert "\u2022 Confidence: medium" in message
+    assert "\U0001F7E2 Signal: BUY" in message
     assert (
-        "\u2022 Reason: No strong confirmation from current market context."
+        "\U0001F9E0 Why EYE thinks this: EYE sees a long intraday setup with enough confirmation."
         in message
     )
     assert "Tesi invariata rispetto all'ultimo invio" not in message
@@ -610,16 +611,14 @@ def test_build_asset_update_message_returns_no_trade_message_with_na_levels() ->
     )
 
     assert message.startswith("\U0001F4CA WTI Crude Oil (WTI)")
-    assert "\u2022 Signal: NO TRADE" in message
-    assert "\u2022 Scenario: range day" in message
-    assert "\u2022 Confidence: low" in message
+    assert "\u26AA Signal: NO TRADE" in message
+    assert "\U0001F4CD Entry area: n/a" in message
+    assert "\U0001F6D1 Stop loss: n/a" in message
+    assert "\U0001F3AF Take profit: n/a" in message
     assert (
-        "\u2022 Reason: No strong confirmation from current market context."
+        "\U0001F9E0 Why EYE thinks this: The market is moving sideways, so EYE prefers to wait."
         in message
     )
-    assert "\u2022 Entry: n/a" in message
-    assert "\u2022 Stop loss: n/a" in message
-    assert "\u2022 Take profit: n/a" in message
 
 
 def test_build_asset_update_message_rewrites_disabled_external_intelligence_reason() -> None:
@@ -640,7 +639,35 @@ def test_build_asset_update_message_rewrites_disabled_external_intelligence_reas
     )
 
     assert (
-        "\u2022 Reason: No confirmed macro/news edge right now."
+        "\U0001F9E0 Why EYE thinks this: Trend is still up, but confirmation is not strong enough yet."
+        in message
+    )
+
+
+def test_build_asset_update_message_uses_drivers_to_explain_buy_signal() -> None:
+    service = TelegramAlertService(
+        settings=SimpleNamespace(
+            telegram_bot_token="test-token",
+            telegram_chat_id="123",
+            telegram_alerts_enabled=True,
+        )
+    )
+
+    message = service.build_asset_update_message(
+        asset="ndx",
+        action="long",
+        scenario="trend_up",
+        confidence_label="high",
+        reason="External intelligence bias=long, drivers=fed, macro, treasury, synthesis=Risk improving.",
+        entry_min=24020.0,
+        entry_max=24055.0,
+        stop_loss=23910.0,
+        take_profit_1=24210.0,
+        take_profit_2=24300.0,
+    )
+
+    assert (
+        "\U0001F9E0 Why EYE thinks this: EYE sees a long setup supported by fed, macro, treasury."
         in message
     )
 
@@ -678,9 +705,9 @@ def test_publish_asset_update_first_send_without_previous_state() -> None:
     assert result["state_change"]["has_previous_state"] is False
     assert result["state_change"]["should_alert"] is False
     assert result["message"].startswith("\U0001F4CA Nasdaq 100 (NDX)")
-    assert "\u2022 Signal: BUY" in result["message"]
+    assert "\U0001F7E2 Signal: BUY" in result["message"]
     assert (
-        "\u2022 Reason: US tech leadership remains supportive for buyers."
+        "\U0001F9E0 Why EYE thinks this: EYE sees a long intraday setup with enough confirmation."
         in result["message"]
     )
     assert "Why now:" not in result["message"]
@@ -729,9 +756,9 @@ def test_publish_asset_update_sends_alert_when_action_changes() -> None:
 
     assert result["state_change"]["should_alert"] is True
     assert result["message"].startswith("\U0001F4CA Nasdaq 100 (NDX)")
-    assert "\u2022 Signal: BUY" in result["message"]
+    assert "\U0001F7E2 Signal: BUY" in result["message"]
     assert (
-        "\u2022 Reason: No strong confirmation from current market context."
+        "\U0001F9E0 Why EYE thinks this: EYE sees a long intraday setup with enough confirmation."
         in result["message"]
     )
 
@@ -779,9 +806,9 @@ def test_publish_asset_update_sends_update_when_only_levels_change() -> None:
     assert result["state_change"]["change_detected"] is True
     assert result["state_change"]["should_alert"] is False
     assert result["message"].startswith("\U0001F4CA WTI Crude Oil (WTI)")
-    assert "\u2022 Signal: SELL" in result["message"]
+    assert "\U0001F534 Signal: SELL" in result["message"]
     assert (
-        "\u2022 Reason: No strong confirmation from current market context."
+        "\U0001F9E0 Why EYE thinks this: EYE sees a short intraday setup with enough confirmation."
         in result["message"]
     )
 
@@ -1098,3 +1125,36 @@ def test_publish_asset_update_allows_immediate_alert() -> None:
     assert result["schedule_decision"]["send_type"] == "immediate_alert"
     assert result["state_change"]["should_alert"] is True
     assert result["send_result"]["ok"] is True
+
+
+def test_build_asset_update_message_is_human_friendly_and_operational() -> None:
+    service = TelegramAlertService()
+
+    message = service.build_asset_update_message(
+        asset="NDX",
+        action="BUY",
+        scenario="trend_up",
+        confidence_label="high",
+        reason=(
+            "drivers=fed, tier_1_source, high_weight_source, "
+            "synthesis=Fed tone is supportive and macro pressure is easing."
+        ),
+        technical_reason="Breakout confirmed above intraday resistance",
+        top_headlines=["Fed officials signal softer tone"],
+        entry_min=20100.0,
+        entry_max=20140.0,
+        stop_loss=20020.0,
+        take_profit_1=20220.0,
+        take_profit_2=20310.0,
+        state_change={
+            "previous_action": "WAIT",
+            "action": "BUY",
+        },
+    )
+
+    assert "📊 Nasdaq 100 (NDX)" in message
+    assert "Signal: BUY" in message
+    assert "📍 Entry area:" in message
+    assert "🧩 Main driver: Breakout confirmed above intraday resistance" in message
+    assert "🔄 What changed: signal moved from WAIT to BUY." in message
+    assert "🧠 Why EYE thinks this:" in message
