@@ -285,6 +285,62 @@ class MarketEventRepository:
             connection.commit()
             return int(cursor.rowcount if cursor.rowcount != -1 else 0)
 
+    def get_learning_summary(
+        self,
+        *,
+        symbol: str | None = None,
+        lookback_days: int = 90,
+        min_samples: int = 3,
+    ) -> list[dict[str, object]]:
+        if lookback_days <= 0:
+            raise ValueError("lookback_days must be greater than 0")
+        if min_samples <= 0:
+            raise ValueError("min_samples must be greater than 0")
+
+        cutoff_utc = (
+            datetime.now(timezone.utc) - timedelta(days=lookback_days)
+        ).isoformat()
+
+        sql = """
+            SELECT
+                e.symbol,
+                e.event_type,
+                e.source_name,
+                e.direction,
+                COUNT(*) AS samples,
+                ROUND(AVG(f.event_score), 2) AS avg_event_score,
+                ROUND(AVG(f.observed_after_5m), 4) AS avg_after_5m,
+                ROUND(AVG(f.observed_after_30m), 4) AS avg_after_30m,
+                ROUND(AVG(f.observed_after_2h), 4) AS avg_after_2h,
+                ROUND(AVG(f.session_close_outcome), 4) AS avg_session_close
+            FROM market_events e
+            JOIN event_outcome_feedback f
+                ON f.event_id = e.event_id
+            WHERE e.created_at_utc >= ?
+        """
+        params: list[object] = [cutoff_utc]
+
+        if symbol is not None:
+            sql += " AND e.symbol = ?"
+            params.append(str(symbol).strip().upper())
+
+        sql += """
+            GROUP BY
+                e.symbol,
+                e.event_type,
+                e.source_name,
+                e.direction
+            HAVING COUNT(*) >= ?
+            ORDER BY avg_event_score DESC, samples DESC
+        """
+        params.append(min_samples)
+
+        with sqlite3.connect(self.db_path) as connection:
+            connection.row_factory = sqlite3.Row
+            rows = connection.execute(sql, tuple(params)).fetchall()
+
+        return [dict(row) for row in rows]
+
     def _initialize_database(self) -> None:
         with sqlite3.connect(self.db_path) as connection:
             connection.execute(

@@ -354,3 +354,121 @@ def test_list_recent_events_rejects_invalid_limit() -> None:
             repository.list_recent_events(limit=0)
     finally:
         _cleanup_db_file(db_path)
+
+
+def test_get_learning_summary_returns_grouped_history() -> None:
+    db_path = _build_test_db_path()
+
+    try:
+        repo = MarketEventRepository(db_path=db_path)
+
+        event_1 = StructuredMarketEvent(
+            event_id="learn-ndx-001",
+            asset="Nasdaq 100",
+            symbol="NDX",
+            timeframe="1h",
+            event_type=MarketEventType.headline,
+            source_type=IntelligenceSourceType.news,
+            source_name="FedWire",
+            direction=IntelligenceDirection.bullish,
+            urgency=IntelligenceImportance.high,
+            confidence_pct=80.0,
+            title="Bullish event 1",
+            summary="Test summary 1",
+            event_score=70.0,
+        )
+        event_2 = StructuredMarketEvent(
+            event_id="learn-ndx-002",
+            asset="Nasdaq 100",
+            symbol="NDX",
+            timeframe="1h",
+            event_type=MarketEventType.headline,
+            source_type=IntelligenceSourceType.news,
+            source_name="FedWire",
+            direction=IntelligenceDirection.bullish,
+            urgency=IntelligenceImportance.high,
+            confidence_pct=82.0,
+            title="Bullish event 2",
+            summary="Test summary 2",
+            event_score=72.0,
+        )
+        event_3 = StructuredMarketEvent(
+            event_id="learn-ndx-003",
+            asset="Nasdaq 100",
+            symbol="NDX",
+            timeframe="1h",
+            event_type=MarketEventType.headline,
+            source_type=IntelligenceSourceType.news,
+            source_name="FedWire",
+            direction=IntelligenceDirection.bullish,
+            urgency=IntelligenceImportance.high,
+            confidence_pct=84.0,
+            title="Bullish event 3",
+            summary="Test summary 3",
+            event_score=74.0,
+        )
+
+        repo.save_event(event_1)
+        repo.save_event(event_2)
+        repo.save_event(event_3)
+
+        repo.save_feedback(
+            EventOutcomeFeedback(
+                event_id="learn-ndx-001",
+                asset="Nasdaq 100",
+                symbol="NDX",
+                observed_after_5m=0.5,
+                observed_after_30m=1.0,
+                observed_after_2h=1.5,
+                session_close_outcome=2.0,
+                event_score=80.0,
+                notes="feedback 1",
+            )
+        )
+        repo.save_feedback(
+            EventOutcomeFeedback(
+                event_id="learn-ndx-002",
+                asset="Nasdaq 100",
+                symbol="NDX",
+                observed_after_5m=0.7,
+                observed_after_30m=1.2,
+                observed_after_2h=1.7,
+                session_close_outcome=2.2,
+                event_score=82.0,
+                notes="feedback 2",
+            )
+        )
+        repo.save_feedback(
+            EventOutcomeFeedback(
+                event_id="learn-ndx-003",
+                asset="Nasdaq 100",
+                symbol="NDX",
+                observed_after_5m=0.9,
+                observed_after_30m=1.4,
+                observed_after_2h=1.9,
+                session_close_outcome=2.4,
+                event_score=84.0,
+                notes="feedback 3",
+            )
+        )
+
+        summary = repo.get_learning_summary(
+            symbol="NDX",
+            lookback_days=90,
+            min_samples=3,
+        )
+
+        assert len(summary) == 1
+        row = summary[0]
+        assert row["symbol"] == "NDX"
+        assert row["event_type"] == "headline"
+        assert row["source_name"] == "FedWire"
+        assert row["direction"] == "bullish"
+        assert row["samples"] == 3
+        assert row["avg_event_score"] == 82.0
+        assert row["avg_after_5m"] == 0.7
+        assert row["avg_after_30m"] == 1.2
+        assert row["avg_after_2h"] == 1.7
+        assert row["avg_session_close"] == 2.2
+    finally:
+        _cleanup_db_file(db_path)
