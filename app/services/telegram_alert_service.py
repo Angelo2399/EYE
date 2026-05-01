@@ -169,6 +169,7 @@ class TelegramAlertService:
             scenario=scenario,
             confidence_label=confidence_label,
             reason=resolved_reason,
+            top_headlines=top_headlines,
         )
         formatted_technical_reason = self._format_technical_reason(technical_reason)
         headline_line = self._build_headline_line(
@@ -183,6 +184,10 @@ class TelegramAlertService:
             top_headlines=top_headlines,
         )
         what_changed_line = self._build_what_changed_line(state_change)
+        source_line = self._build_source_line(reason=resolved_reason)
+        headline_detail_line = self._build_headline_detail_line(
+            top_headlines=top_headlines
+        )
 
         if signal_text in {"WAIT", "NO TRADE"}:
             lines = [
@@ -195,6 +200,12 @@ class TelegramAlertService:
 
             if main_driver_line:
                 lines.append(main_driver_line)
+
+            if source_line:
+                lines.append(source_line)
+
+            if headline_detail_line:
+                lines.append(headline_detail_line)
 
             if headline_line:
                 lines.append(headline_line)
@@ -218,6 +229,12 @@ class TelegramAlertService:
 
         if main_driver_line:
             lines.append(main_driver_line)
+
+        if source_line:
+            lines.append(source_line)
+
+        if headline_detail_line:
+            lines.append(headline_detail_line)
 
         if headline_line:
             lines.append(headline_line)
@@ -348,6 +365,7 @@ class TelegramAlertService:
         scenario: str | None,
         confidence_label: str | None,
         reason: str | None,
+        top_headlines: list[str] | None = None,
     ) -> str:
         scenario_text = self._format_scenario_label(scenario).lower()
         confidence_text = self._format_confidence_label(confidence_label).lower()
@@ -357,8 +375,14 @@ class TelegramAlertService:
         drivers_text = self._extract_drivers_from_reason(raw_reason)
         synthesis_text = self._extract_synthesis_from_reason(raw_reason)
         use_synthesis_text = self._should_prefer_synthesis_text(synthesis_text)
+        first_headline = next(
+            (str(item).strip() for item in (top_headlines or []) if str(item).strip()),
+            "",
+        )
 
         if action in {"WAIT", "NO TRADE"}:
+            if first_headline:
+                return f"Latest real headline: {first_headline}."
             if use_synthesis_text:
                 return synthesis_text
 
@@ -386,6 +410,8 @@ class TelegramAlertService:
             return "There is no clear intraday edge right now."
 
         if action == "BUY":
+            if first_headline:
+                return f"EYE sees a long setup supported by this headline: {first_headline}."
             if use_synthesis_text:
                 return synthesis_text
 
@@ -398,6 +424,8 @@ class TelegramAlertService:
             return "EYE sees a long intraday setup with enough confirmation."
 
         if action == "SELL":
+            if first_headline:
+                return f"EYE sees a short setup supported by this headline: {first_headline}."
             if use_synthesis_text:
                 return synthesis_text
 
@@ -491,6 +519,73 @@ class TelegramAlertService:
                 return f"🧩 Main driver: {first_headline}"
 
         return None
+
+    def _build_source_line(
+        self,
+        *,
+        reason: str | None,
+    ) -> str | None:
+        source_text = self._extract_source_from_reason(str(reason or ""))
+        if not source_text:
+            return None
+        return f"📰 Source: {source_text}"
+
+    def _build_headline_detail_line(
+        self,
+        *,
+        top_headlines: list[str] | None,
+    ) -> str | None:
+        if not top_headlines:
+            return None
+
+        first_headline = next(
+            (str(item).strip() for item in top_headlines if str(item).strip()),
+            "",
+        )
+        if not first_headline:
+            return None
+
+        return f"🗞 Headline: {first_headline}"
+
+    def _extract_source_from_reason(self, reason: str) -> str | None:
+        text = str(reason or "")
+        lower_text = text.lower()
+
+        marker = "source profile="
+        idx = lower_text.find(marker)
+        if idx == -1:
+            return None
+
+        source_part = text[idx + len(marker):]
+        for stop_marker in [". risk flags=", ", risk flags=", "; risk flags=", "."]:
+            stop_idx = source_part.lower().find(stop_marker.strip().lower())
+            if stop_idx != -1:
+                source_part = source_part[:stop_idx]
+                break
+
+        candidates = [
+            chunk.strip(" .,:;")
+            for chunk in source_part.split(",")
+            if chunk.strip(" .,:;")
+        ]
+
+        filtered = [
+            item.replace("_", " ")
+            for item in candidates
+            if item.replace("_", " ").lower()
+            not in {
+                "tier 1 source",
+                "tier 2 source",
+                "tier 3 source",
+                "high weight source",
+                "medium weight source",
+            }
+        ]
+
+        if not filtered:
+            return None
+
+        return filtered[0].title()
 
     def _build_what_changed_line(
         self,

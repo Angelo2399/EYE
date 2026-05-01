@@ -1158,3 +1158,51 @@ def test_build_asset_update_message_is_human_friendly_and_operational() -> None:
     assert "🧩 Main driver: Breakout confirmed above intraday resistance" in message
     assert "🔄 What changed: signal moved from WAIT to BUY." in message
     assert "🧠 Why EYE thinks this:" in message
+
+
+def test_build_human_reason_prefers_real_headline_over_generic_synthesis() -> None:
+    service = TelegramAlertService()
+
+    result = service._build_human_reason(
+        action="BUY",
+        scenario="trend_up",
+        confidence_label="high",
+        reason="drivers=fed, synthesis=Generic macro support remains constructive.",
+        top_headlines=["Fed officials signal softer tone on rates"],
+    )
+
+    assert result == (
+        "EYE sees a long setup supported by this headline: "
+        "Fed officials signal softer tone on rates."
+    )
+
+
+def test_build_asset_update_message_includes_source_and_real_headline() -> None:
+    service = TelegramAlertService()
+
+    message = service.build_asset_update_message(
+        asset="NDX",
+        action="BUY",
+        scenario="trend_up",
+        confidence_label="high",
+        reason=(
+            "drivers=fed, tier_1_source, high_weight_source, "
+            "synthesis=Nasdaq 100: intelligence bias=long, confidence=68.0%, "
+            "session=open, regime=bullish. Accepted items=3, critical items=1. "
+            "Top headlines=Fed officials signal softer tone. "
+            "Dominant drivers=fed, rates, macro. "
+            "Source profile=tier_1_source, high_weight_source, federal reserve. "
+            "Risk flags=none."
+        ),
+        technical_reason="Breakout confirmed above intraday resistance",
+        top_headlines=["Fed officials signal softer tone"],
+        entry_min=20100.0,
+        entry_max=20140.0,
+        stop_loss=20020.0,
+        take_profit_1=20220.0,
+        take_profit_2=20310.0,
+        state_change={"previous_action": "WAIT", "action": "BUY"},
+    )
+
+    assert "📰 Source: Federal Reserve" in message
+    assert "🗞 Headline: Fed officials signal softer tone" in message
