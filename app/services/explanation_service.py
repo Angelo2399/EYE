@@ -5,6 +5,7 @@ from app.schemas.market_intelligence import MarketIntelligenceSnapshot
 from app.schemas.probability import ProbabilityEstimate
 from app.schemas.risk import RiskPlan
 from app.schemas.scoring import SetupScore
+from app.services.technical_confluence_service import TechnicalConfluence
 
 
 class ExplanationService:
@@ -17,6 +18,7 @@ class ExplanationService:
         probability_estimate: ProbabilityEstimate,
         day_context: DayContext | None = None,
         intelligence_snapshot: MarketIntelligenceSnapshot | None = None,
+        technical_confluence: TechnicalConfluence | None = None,
     ) -> str:
         action = setup_score.action.value.upper()
         regime_label = regime.replace("_", " ")
@@ -27,6 +29,7 @@ class ExplanationService:
         )
         exit_text = risk_plan.hard_exit_time or "n/a"
         day_context_text = self._format_day_context(day_context)
+        technical_text = self._format_technical_confluence(technical_confluence)
         intelligence_text = self._format_external_intelligence(intelligence_snapshot)
 
         if setup_score.action.value in {"wait", "no_trade"}:
@@ -35,6 +38,7 @@ class ExplanationService:
                 f"Regime {regime_label}. "
                 f"Setup intraday non abbastanza pulito. "
                 f"{day_context_text}"
+                f"{technical_text}"
                 f"{intelligence_text}"
                 f"Score={setup_score.score:.1f}, "
                 f"fav move={probability_estimate.favorable_move_pct:.1f}%, "
@@ -54,6 +58,7 @@ class ExplanationService:
             f"{asset}: {action} intraday. "
             f"Regime {regime_label}. "
             f"{day_context_text}"
+            f"{technical_text}"
             f"{intelligence_text}"
             f"Entry window {entry_window_text}, "
             f"holding {holding_text}, "
@@ -78,6 +83,22 @@ class ExplanationService:
             f"ctx_conf={day_context.confidence_pct:.1f}%. "
         )
 
+    def _format_technical_confluence(
+        self,
+        technical_confluence: TechnicalConfluence | None,
+    ) -> str:
+        if technical_confluence is None:
+            return ""
+
+        return (
+            f"Technical confluence score={technical_confluence.confluence_score:.1f}, "
+            f"trend={technical_confluence.trend_bias}, "
+            f"momentum={technical_confluence.momentum_state}, "
+            f"volatility={technical_confluence.volatility_state}, "
+            f"structure={technical_confluence.structure_state}, "
+            f"summary={technical_confluence.summary} "
+        )
+
     def _format_external_intelligence(
         self,
         intelligence_snapshot: MarketIntelligenceSnapshot | None,
@@ -85,12 +106,7 @@ class ExplanationService:
         if intelligence_snapshot is None:
             return ""
 
-        drivers = [
-            str(driver).strip()
-            for driver in intelligence_snapshot.dominant_drivers[:3]
-            if str(driver).strip()
-        ]
-        drivers_text = ", ".join(drivers) if drivers else "n/a"
+        drivers_text = self._build_asset_specific_driver_text(intelligence_snapshot)
         synthesis = str(intelligence_snapshot.synthesis or "").strip()
 
         if synthesis:
@@ -106,6 +122,51 @@ class ExplanationService:
             f"ext_conf={intelligence_snapshot.bias_confidence_pct:.1f}%, "
             f"drivers={drivers_text}. "
         )
+
+    def _build_asset_specific_driver_text(
+        self,
+        intelligence_snapshot: MarketIntelligenceSnapshot,
+    ) -> str:
+        items = list(getattr(intelligence_snapshot, "items", []) or [])
+        ranked_items = sorted(
+            items,
+            key=self._rank_intelligence_item,
+            reverse=True,
+        )
+
+        for item in ranked_items:
+            title = " ".join(str(getattr(item, "title", "")).split()).strip()
+            source_name = " ".join(str(getattr(item, "source_name", "")).split()).strip()
+
+            if title and source_name:
+                return f"{source_name}: {title}"
+
+            if title:
+                return title
+
+        drivers = [
+            str(driver).strip()
+            for driver in intelligence_snapshot.dominant_drivers[:3]
+            if str(driver).strip()
+        ]
+        return ", ".join(drivers) if drivers else "n/a"
+
+    def _rank_intelligence_item(self, item) -> float:
+        importance_value = str(
+            getattr(getattr(item, "importance", None), "value", getattr(item, "importance", ""))
+        ).strip().lower()
+
+        importance_rank = {
+            "critical": 4.0,
+            "high": 3.0,
+            "medium": 2.0,
+            "low": 1.0,
+        }.get(importance_value, 0.0)
+
+        confidence_pct = float(getattr(item, "confidence_pct", 0.0) or 0.0)
+        relevance_score = float(getattr(item, "relevance_score", 0.0) or 0.0)
+
+        return (importance_rank * 1000.0) + (confidence_pct * 10.0) + relevance_score
 
     def _format_entry(self, risk_plan: RiskPlan) -> str:
         if risk_plan.entry_min is None or risk_plan.entry_max is None:

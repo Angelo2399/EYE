@@ -122,3 +122,50 @@ def test_build_explanation_for_wait_setup() -> None:
     assert "fav move=50.0%" in result
     assert "confidence=low" in result
     assert "Nessuna posizione overnight." in result
+
+
+def test_format_external_intelligence_prefers_real_source_and_headline_driver() -> None:
+    from app.schemas.market_intelligence import (
+        IntelligenceDirection,
+        IntelligenceImportance,
+        IntelligenceSourceType,
+        MarketBias,
+        MarketEventType,
+        MarketIntelligenceItem,
+        MarketIntelligenceSnapshot,
+    )
+    from app.services.explanation_service import ExplanationService
+
+    service = ExplanationService()
+
+    snapshot = MarketIntelligenceSnapshot(
+        asset="WTI Crude Oil",
+        symbol="WTI",
+        timeframe="1h",
+        generated_at_utc="2026-05-01T18:30:00+00:00",
+        market_bias=MarketBias.short,
+        bias_confidence_pct=71.0,
+        dominant_drivers=["macro", "central_bank", "commodity"],
+        items=[
+            MarketIntelligenceItem(
+                source=IntelligenceSourceType.news,
+                event_type=MarketEventType.headline,
+                importance=IntelligenceImportance.high,
+                direction=IntelligenceDirection.bearish,
+                title="EIA reports larger-than-expected crude build",
+                summary="Oil market reacts to bearish inventory surprise.",
+                source_name="U.S. Energy Information Administration",
+                relevance_score=88.0,
+                confidence_pct=82.0,
+            )
+        ],
+        synthesis="WTI Crude Oil: intelligence bias=short.",
+    )
+
+    text = service._format_external_intelligence(snapshot)
+
+    assert (
+        "drivers=U.S. Energy Information Administration: "
+        "EIA reports larger-than-expected crude build"
+    ) in text
+    assert "drivers=macro, central_bank, commodity" not in text
